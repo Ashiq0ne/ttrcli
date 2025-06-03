@@ -1,0 +1,7 @@
+{
+  "threads": 20,
+  "retry_limit": 5,
+  "delay": 3,
+  "timeout": 30,
+  "bulk_mode": false
+}
