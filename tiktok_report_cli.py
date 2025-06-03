@@ -116,7 +116,7 @@ def report_user(username, proxy=None):
         }
 
     try:
-        r = requests.post("https://www.tiktok.com/aweme/v1/feedback/",  # ← Replace with real or simulated endpoint
+        r = requests.post("https://www.tiktok.com/api/report/user/submit/?aid=1988",  # ← Replace with real or simulated endpoint
                           headers=headers,
                           json=data,
                           proxies=proxies,
@@ -168,6 +168,9 @@ def run_report_loop(targets):
 if __name__ == "__main__":
     try:
         targets = load_targets()
-        run_report_loop(targets)
+        while True:
+            run_report_loop(targets)
+            print(f"\n[⏳] Sleeping for {delay * 5} seconds before next loop...\n")
+            time.sleep(delay * 5)  # Change multiplier as needed
     except KeyboardInterrupt:
         print("\n[!] Aborted by user.")
