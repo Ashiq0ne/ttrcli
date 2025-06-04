@@ -6,17 +6,17 @@ from urllib3.exceptions import InsecureRequestWarning
 
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
-# === টার্মিনাল ইনপুট কনফিগারেশন শুরু ===
-print("\n🔧 কনফিগারেশন লোড হচ্ছে টার্মিনাল থেকে...")
+# === Terminal Configuration ===
+print("\n🔧 Loading configuration from terminal...")
 
-THREADS = int(input("থ্রেড সংখ্যা (ডিফল্ট 10): ") or 10)
-RETRY_LIMIT = int(input("রিট্রাই সীমা (ডিফল্ট 3): ") or 3)
-DELAY = int(input("ডিলে (সেকেন্ড): ") or 3)
-TIMEOUT = int(input("টাইমআউট (সেকেন্ড): ") or 10)
-USE_BULK = input("বাল্ক মোড ব্যবহার করবেন? (y/n): ").strip().lower() == 'y'
-CSV_FILE = input("CSV ফাইলের নাম দিন (ডিফল্ট: targets.csv): ") or "targets.csv"
+THREADS = int(input("Number of threads (default 10): ") or 10)
+RETRY_LIMIT = int(input("Retry limit (default 3): ") or 3)
+DELAY = int(input("Delay (in seconds): ") or 3)
+TIMEOUT = int(input("Timeout (in seconds): ") or 10)
+USE_BULK = input("Use bulk mode? (y/n): ").strip().lower() == 'y'
+CSV_FILE = input("Enter CSV file name (default: targets.csv): ") or "targets.csv"
 
-print("\n🎯 রিপোর্টের কারণ নির্বাচন করুন:")
+print("\n🎯 Select report reason:")
 reason_map = {
     "1": "nudity",
     "2": "violence",
@@ -28,9 +28,9 @@ reason_map = {
 }
 for key, value in reason_map.items():
     print(f"{key}. {value.replace('_', ' ').title()}")
-reason = reason_map.get(input("নম্বর লিখুন (1–7): ").strip(), "nudity")
+reason = reason_map.get(input("Enter number (1–7): ").strip(), "nudity")
 
-# === কনস্ট্যান্ট ===
+# === Constants ===
 PROXY_FILE = "working_proxies.txt"
 USER_AGENT_FILE = "user_agents.txt"
 LOG_FILE = "report_log.txt"
@@ -101,21 +101,27 @@ def report_user(user_id, reason, proxies, user_agents):
             r = requests.post("https://www.tiktok.com/api/report/user/submit/?aid=1988",
                               headers=headers, json=data, proxies=proxy_dict,
                               timeout=TIMEOUT, verify=False)
-            log(f"📨 {user_id} এর জন্য রেসপন্স কোড: {r.status_code}")
+            log(f"📨 Response code for {user_id}: {r.status_code}")
             if r.status_code == 200:
                 save_log(SUCCESS_LOG, f"{user_id} | {proxy} | {datetime.now()}")
                 return True
             elif r.status_code == 429:
-                log("⚠️ রেট লিমিটে হিট হয়েছে। ১০ সেকেন্ড ঘুমাচ্ছে...")
+                log("⚠️ Rate limited. Sleeping for 10 seconds...")
                 time.sleep(10)
         except RequestException as e:
-            log(f"❗ ত্রুটি: {e}")
+            log(f"❗ Error: {e}")
         time.sleep(DELAY)
     save_log(ERROR_LOG, f"{user_id} | {datetime.now()}")
     return False
 
+# Store targets globally after first input
+targets = []
+
 def load_targets():
-    targets = []
+    global targets
+    if targets:
+        return targets
+
     if USE_BULK and os.path.exists(CSV_FILE):
         with open(CSV_FILE, newline="") as f:
             reader = csv.DictReader(f)
@@ -123,8 +129,9 @@ def load_targets():
                 uid = row["user_id"].lstrip("@")
                 targets.append(uid)
     else:
-        uid = input("🎯 রিপোর্ট করতে যেই ইউজার আইডি চান: ").strip().lstrip("@")
+        uid = input("🎯 Enter TikTok username to report: ").strip().lstrip("@")
         targets.append(uid)
+
     return targets
 
 def worker(queue, proxies, user_agents, stats, lock):
@@ -132,13 +139,13 @@ def worker(queue, proxies, user_agents, stats, lock):
         try:
             user_id = queue.get()
             if is_account_under_review(user_id, proxies, user_agents):
-                log(f"⛔ {user_id} রিভিউতে আছে। স্কিপ করা হলো।")
+                log(f"⛔ {user_id} is under review. Skipping.")
             elif report_user(user_id, reason, proxies, user_agents):
-                log(f"✅ রিপোর্ট সফল হয়েছে: {user_id}")
+                log(f"✅ Report successful: {user_id}")
                 with lock:
                     stats["success"] += 1
             else:
-                log(f"❌ রিপোর্ট ব্যর্থ হয়েছে: {user_id}")
+                log(f"❌ Report failed: {user_id}")
                 with lock:
                     stats["fail"] += 1
         finally:
@@ -147,12 +154,12 @@ def worker(queue, proxies, user_agents, stats, lock):
 def run():
     proxies = load_proxies()
     user_agents = load_user_agents()
-    targets = load_targets()
+    current_targets = load_targets()
     queue = Queue()
     stats = {"success": 0, "fail": 0}
     lock = threading.Lock()
 
-    for t in targets:
+    for t in current_targets:
         queue.put(t)
 
     threads = []
@@ -164,14 +171,14 @@ def run():
     for t in threads:
         t.join()
 
-    log("📊 সারসংক্ষেপ:")
-    log(f"মোট: {len(targets)} | সফল: {stats['success']} | ব্যর্থ: {stats['fail']}")
+    log("📊 Summary:")
+    log(f"Total: {len(current_targets)} | Success: {stats['success']} | Failed: {stats['fail']}")
 
 if __name__ == "__main__":
     try:
         while True:
             run()
-            log(f"⏳ {DELAY * 2} সেকেন্ড অপেক্ষা করা হচ্ছে পরবর্তী রাউন্ডের আগে...\n")
+            log(f"⏳ Waiting {DELAY * 2} seconds before next round...\n")
             time.sleep(DELAY * 2)
     except KeyboardInterrupt:
-        log("🛑 ইউজার দ্বারা বন্ধ করা হয়েছে।")
+        log("🛑 Stopped by user.")
