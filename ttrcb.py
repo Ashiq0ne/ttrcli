@@ -6,17 +6,17 @@ from urllib3.exceptions import InsecureRequestWarning
 
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
-# === Terminal Configuration ===
+# === Terminal Config ===
 print("\n🔧 Loading configuration from terminal...")
 
 THREADS = int(input("Number of threads (default 10): ") or 10)
 RETRY_LIMIT = int(input("Retry limit (default 3): ") or 3)
-DELAY = int(input("Delay (in seconds): ") or 3)
-TIMEOUT = int(input("Timeout (in seconds): ") or 10)
+DELAY = int(input("Delay (seconds): ") or 3)
+TIMEOUT = int(input("Timeout (seconds): ") or 10)
 USE_BULK = input("Use bulk mode? (y/n): ").strip().lower() == 'y'
-CSV_FILE = input("Enter CSV file name (default: targets.csv): ") or "targets.csv"
+CSV_FILE = input("CSV filename (default: targets.csv): ") or "targets.csv"
 
-print("\n🎯 Select report reason:")
+print("\n🎯 Select reason for reporting:")
 reason_map = {
     "1": "nudity",
     "2": "violence",
@@ -37,6 +37,8 @@ LOG_FILE = "report_log.txt"
 SUCCESS_LOG = "logs/success_log.txt"
 ERROR_LOG = "logs/error_log.txt"
 os.makedirs("logs", exist_ok=True)
+
+report_count = {}  # Track reports per user
 
 def log(msg):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -101,12 +103,12 @@ def report_user(user_id, reason, proxies, user_agents):
             r = requests.post("https://www.tiktok.com/api/report/user/submit/?aid=1988",
                               headers=headers, json=data, proxies=proxy_dict,
                               timeout=TIMEOUT, verify=False)
-            log(f"📨 Response code for {user_id}: {r.status_code}")
+            log(f"📨 Response {r.status_code} for {user_id}")
             if r.status_code == 200:
                 save_log(SUCCESS_LOG, f"{user_id} | {proxy} | {datetime.now()}")
                 return True
             elif r.status_code == 429:
-                log("⚠️ Rate limited. Sleeping for 10 seconds...")
+                log("⚠️ Rate limited. Sleeping 10s...")
                 time.sleep(10)
         except RequestException as e:
             log(f"❗ Error: {e}")
@@ -114,14 +116,8 @@ def report_user(user_id, reason, proxies, user_agents):
     save_log(ERROR_LOG, f"{user_id} | {datetime.now()}")
     return False
 
-# Store targets globally after first input
-targets = []
-
 def load_targets():
-    global targets
-    if targets:
-        return targets
-
+    targets = []
     if USE_BULK and os.path.exists(CSV_FILE):
         with open(CSV_FILE, newline="") as f:
             reader = csv.DictReader(f)
@@ -129,9 +125,8 @@ def load_targets():
                 uid = row["user_id"].lstrip("@")
                 targets.append(uid)
     else:
-        uid = input("🎯 Enter TikTok username to report: ").strip().lstrip("@")
+        uid = input("🎯 Enter target user ID to report: ").strip().lstrip("@")
         targets.append(uid)
-
     return targets
 
 def worker(queue, proxies, user_agents, stats, lock):
@@ -141,25 +136,26 @@ def worker(queue, proxies, user_agents, stats, lock):
             if is_account_under_review(user_id, proxies, user_agents):
                 log(f"⛔ {user_id} is under review. Skipping.")
             elif report_user(user_id, reason, proxies, user_agents):
-                log(f"✅ Report successful: {user_id}")
+                log(f"✅ Report sent for {user_id}")
                 with lock:
                     stats["success"] += 1
+                    report_count[user_id] = report_count.get(user_id, 0) + 1
+                    log(f"📈 Total reports sent for {user_id}: {report_count[user_id]}")
             else:
-                log(f"❌ Report failed: {user_id}")
+                log(f"❌ Failed to report {user_id}")
                 with lock:
                     stats["fail"] += 1
         finally:
             queue.task_done()
 
-def run():
+def run(targets):
     proxies = load_proxies()
     user_agents = load_user_agents()
-    current_targets = load_targets()
     queue = Queue()
     stats = {"success": 0, "fail": 0}
     lock = threading.Lock()
 
-    for t in current_targets:
+    for t in targets:
         queue.put(t)
 
     threads = []
@@ -172,12 +168,16 @@ def run():
         t.join()
 
     log("📊 Summary:")
-    log(f"Total: {len(current_targets)} | Success: {stats['success']} | Failed: {stats['fail']}")
+    log(f"Total: {len(targets)} | Success: {stats['success']} | Failed: {stats['fail']}")
+    log("📊 Individual Report Counts:")
+    for uid, count in report_count.items():
+        log(f"{uid}: {count} reports sent")
 
 if __name__ == "__main__":
     try:
+        target_list = load_targets()
         while True:
-            run()
+            run(target_list)
             log(f"⏳ Waiting {DELAY * 2} seconds before next round...\n")
             time.sleep(DELAY * 2)
     except KeyboardInterrupt:
